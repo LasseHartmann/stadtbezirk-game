@@ -4,15 +4,10 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, arrayUnion, deleteDoc } from 'firebase/firestore';
 import { 
   Trash2, Undo2, Check, PlusCircle, Settings, LogOut, Train, Bus, Navigation,
-  Clock, RefreshCw, EyeOff, History, X, Pencil, Pause, Play, StopCircle, Wifi, WifiOff, HelpCircle
+  Clock, RefreshCw, EyeOff, History, X, Pencil, Pause, Play, StopCircle, Wifi, WifiOff, HelpCircle, RotateCcw
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
-// Import the functions you need from the SDKs you need
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyCdnUmQvuzURBA1bZAkhyFh2MvuHKgx32M",
   authDomain: "stadtbezirk-scramble-32d93.firebaseapp.com",
@@ -209,7 +204,7 @@ export default function App() {
     const easterEggs = {
       "42": "42 ist wohl doch nicht die Lösung für das Leben, das Universum und den ganzen Rest...",
       "passwort": "Wirklich? \"passwort\"?",
-      "max": "Wer das ließt ist dumm!",
+      "max": "Wer das liest ist dumm!",
       "rick astley": "Never gonna give you up, never gonna let you down!",
       "404": "Not found",
       "123456": "Das ist die Kombination für den Koffer eines Idioten! Versuch’s nochmal.",
@@ -293,7 +288,7 @@ export default function App() {
       }
       await updateDoc(docRef, payload);
     } catch (err) {
-      console.error("Error updating game state:", err);
+      console.error("Fehler beim Aktualisieren des Spielstands:", err);
     }
   };
 
@@ -327,6 +322,17 @@ export default function App() {
     const teamName = team === 'orange' ? 'Orange' : 'Blau';
     const sourceName = listKey === 'openCards' ? 'offenen Bezirken' : 'privaten Karten';
     updateGame(updates, `Team ${teamName} claimt Bezirk ${card} (aus ${sourceName}).`);
+  };
+
+  // Löscht eine Karte ersatzlos (ohne Nachziehen) für den Admin
+  const handleDeleteCard = (card, sourceName, listKey) => {
+    if (role !== 'admin') return;
+    const currentList = gameState[listKey] || [];
+    const newList = currentList.filter(c => c !== card);
+    updateGame({
+      [listKey]: newList,
+      deletedCards: [...(gameState.deletedCards || []), card]
+    }, `Admin hat "${card}" ersatzlos aus ${sourceName} gelöscht.`);
   };
 
   // Ersetzt eine Karte (privat oder offen): Löscht die alte und zieht eine neue
@@ -381,6 +387,44 @@ export default function App() {
       deck: newDeck,
       [listKey]: newList
     }, `${actor} hat den offenen Bezirk "${card}" zufällig in den Stapel zurückgemischt und ersetzt.`);
+  };
+
+  // Gelöschte Karte zufällig zurück in den Stapel mischen
+  const handleRestoreDeletedToDeck = (card) => {
+    if (role !== 'admin') return;
+    const currentDeleted = gameState.deletedCards || [];
+    const cardIndex = currentDeleted.indexOf(card);
+    if (cardIndex === -1) return;
+
+    const newDeleted = [...currentDeleted];
+    newDeleted.splice(cardIndex, 1);
+
+    const newDeck = [...gameState.deck];
+    const randomIndex = Math.floor(Math.random() * (newDeck.length + 1));
+    newDeck.splice(randomIndex, 0, card);
+
+    updateGame({
+      deletedCards: newDeleted,
+      deck: newDeck
+    }, `Admin hat gelöschte Karte "${card}" zufällig zurück in den Ziehstapel gemischt.`);
+  };
+
+  // Alle gelöschten Karten zufällig zurück in den Stapel mischen
+  const handleRestoreAllDeletedToDeck = () => {
+    if (role !== 'admin') return;
+    const currentDeleted = gameState.deletedCards || [];
+    if (currentDeleted.length === 0) return;
+
+    const newDeck = [...gameState.deck];
+    currentDeleted.forEach(card => {
+      const randomIndex = Math.floor(Math.random() * (newDeck.length + 1));
+      newDeck.splice(randomIndex, 0, card);
+    });
+
+    updateGame({
+      deletedCards: [],
+      deck: newDeck
+    }, `Admin hat alle gelöschten Karten (${currentDeleted.length}) zufällig zurück in den Ziehstapel gemischt.`);
   };
 
   const handleDrawCard = (targetList, logName) => {
@@ -550,7 +594,7 @@ export default function App() {
           )}
 
           <div className="flex justify-between items-center space-x-2">
-            {!isPrivate && role === 'admin' && (
+            {role === 'admin' && (
               <button 
                 onClick={() => handleDeleteCard(card, sourceName, listKey)}
                 className="p-2 bg-red-100 text-red-700 rounded-full hover:bg-red-200" title="Ersatzlos löschen (Nur Admin)">
@@ -580,7 +624,7 @@ export default function App() {
               <button 
                 disabled={gameState.status !== 'active' && role !== 'admin'}
                 onClick={() => handleReplaceCard(card, listKey)}
-                className="flex-1 flex justify-center items-center space-x-2 py-1.5 bg-white text-gray-800 rounded border border-gray-200 hover:bg-gray-100 font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="Ersetzen (Karte wird gelöscht)">
+                className="flex-1 flex justify-center items-center space-x-2 py-1.5 bg-white text-gray-800 rounded border border-gray-200 hover:bg-gray-100 font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="Ersetzen (Karte wird gelöscht & neu gezogen)">
                 <RefreshCw size={16} /> <span className="text-sm">Ersetzen</span>
               </button>
             )}
@@ -1093,11 +1137,32 @@ export default function App() {
                       </div>
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-red-400 mb-1">Gelöscht ({(gameState.deletedCards || []).length})</h4>
+                      <div className="flex justify-between items-center mb-1">
+                        <h4 className="text-xs font-bold text-red-400">Gelöscht ({(gameState.deletedCards || []).length})</h4>
+                        {(gameState.deletedCards || []).length > 0 && (
+                          <button
+                            onClick={handleRestoreAllDeletedToDeck}
+                            className="text-[10px] bg-red-800 hover:bg-red-700 text-red-100 px-1.5 py-0.5 rounded flex items-center space-x-1 transition-colors font-bold"
+                            title="Alle gelöschten Karten zufällig zurück in den Stapel mischen"
+                          >
+                            <RotateCcw size={10} />
+                            <span>Alle zurück</span>
+                          </button>
+                        )}
+                      </div>
                       <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto bg-gray-900 p-2 rounded border border-gray-700">
                         {(gameState.deletedCards || []).length === 0 && <span className="text-xs text-gray-500">Keine gelöschten Karten.</span>}
                         {(gameState.deletedCards || []).map((c, i) => (
-                          <span key={`del-${i}`} className="bg-red-900 text-red-200 text-xs px-2 py-1 rounded">{c}</span>
+                          <span key={`del-${i}`} className="bg-red-900 text-red-200 text-xs pl-2 pr-1 py-1 rounded flex items-center space-x-1">
+                            <span>{c}</span>
+                            <button 
+                              onClick={() => handleRestoreDeletedToDeck(c)} 
+                              className="text-red-300 hover:text-white p-0.5 rounded-full hover:bg-red-800 transition-colors" 
+                              title="Zufällig zurück in Stapel legen"
+                            >
+                              <RotateCcw size={12} />
+                            </button>
+                          </span>
                         ))}
                       </div>
                     </div>
